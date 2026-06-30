@@ -1,0 +1,28 @@
+# Why is QiFi structured this way?
+
+Dear future developer (probably Cody, tired, annoyed, and looking for answers), here is the rationale for this architecture.
+
+## 1. Single-Universe Finance (mixed personal/business)
+Most accounting software starts from the premise that personal and business finances must be completely air-gapped. 
+Real gig workers and sole proprietors don't live like that. They use a single Chase Sapphire card for both AWS servers and Whole Foods groceries.
+**Decision:** We store everything in a unified Ledger of accounts. Separation is achieved purely through metadata, views, tags, and reporting, not by running two separate databases.
+
+## 2. Double-Entry Under the Hood
+Double-entry accounting is the only system that survives audits and scales to real-world complexity (splits, debts, transfers). Single-category cash-ledger budgeting apps eventually break down.
+**Decision:** We keep a rigorous double-entry database structure (`Transaction` + `LedgerEntry` balance invariants). However, we hide the accounting jargon from the user interface. Users interact with simple concepts like "category" and "transfer", while the ledger service translates them to balanced Debits and Credits.
+
+## 3. Import Staging Pipeline
+When statements are imported, they DO NOT write directly to the ledger. This is a non-negotiable safety guard.
+**Decision:** Transactions must go through a "Review Queue" (`RawImportedRow`) first. Here, automated substring classification rules and AI heuristics analyze raw descriptors, clean them up, suggest categories, and let the user approve them. This keeps the double-entry ledger pristine and uncorrupted.
+
+## 4. First-Class Splits
+Splits are not an advanced feature. For a gig worker, a single Uber payment includes tips, platform cuts, tolls, and operating fuel.
+**Decision:** The transaction model is designed from day-one to handle splits (represented by balanced `LedgerEntry` items under a single `Transaction`).
+
+## 5. Counterparty & Accountability Tracking
+Traditional budgeting apps focus solely on "What did I spend?". Real-life survival requires knowing "Who was involved?" and "Who owes whom?".
+**Decision:** Counterparties and accountability obligations (IOUs, reimbursements, disputes) are modeled as first-class citizens. This lets us generate a "reimbursement tracker" and "debts snapshot" that directly links real cash flow to personal and business relationships.
+
+## 6. Offline-First & JSON Sovereignty
+In local-first or development mode, users own their data completely.
+**Decision:** The state is persistent in `localStorage` under a clean React Provider with a clear, direct JSON backup export/import format. This ensures survival, fast loading, and easy testing with zero cloud-database lock-in.

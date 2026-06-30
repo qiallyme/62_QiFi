@@ -1,6 +1,6 @@
 {
-  "name": "QiFinance",
-  "description": "A private accounting and personal bookkeeping ledger web application.",
+  "name": "QiFi",
+  "description": "Simple, intuitive money hub for real life. Upload bank statements, automatically categorize with smart rules, and plan your future cash flow.",
   "requestFramePermissions": [],
   "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

@@ -1,563 +1,1066 @@
-import React, { useState } from 'react';
-import { db, uuid } from '../db';
-import { JournalEntry, JournalLine, Account, Category } from '../types';
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useState, useMemo, useEffect } from 'react';
+import { useQiStore } from '../store';
+import { Transaction, Account, LedgerEntry } from '../types';
 import { 
-  Plus, 
-  Trash2, 
-  AlertCircle, 
-  CheckCircle, 
-  GitCompare, 
-  PlusCircle, 
-  HelpCircle,
-  FileText
+  Search, Filter, CheckCircle, AlertCircle, FileText, 
+  HelpCircle, ChevronDown, ChevronUp, Trash2, Calendar, 
+  ArrowUpRight, ArrowDownLeft, Tag, DollarSign, RefreshCw, Plus, X, Edit2
 } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 
-interface LedgerViewProps {
-  triggerRefresh: () => void;
-}
+export default function LedgerView() {
+  const { 
+    transactions, 
+    accounts, 
+    ledgerEntries, 
+    attachments, 
+    statements, 
+    schedules, 
+    getAccountBalance, 
+    deleteTransaction,
+    addManualTransaction,
+    updateTransaction
+  } = useQiStore();
 
-interface DraftLineInput {
-  accountId: string;
-  categoryId: string;
-  debitAmount: string;
-  creditAmount: string;
-  memo: string;
-}
+  const { pathname } = useLocation();
 
-export function LedgerView({ triggerRefresh }: LedgerViewProps) {
-  const accounts = db.getAccounts();
-  const categories = db.getCategories();
-  const entries = db.getJournalEntries();
-  const lines = db.getJournalLines();
-  const people = db.getPeople();
+  // Editing transaction state
+  const [editingTxId, setEditingTxId] = useState<string | null>(null);
 
-  // Expanded lines creator states
-  const [isCreatorOpen, setIsCreatorOpen] = useState(false);
-  const [entryDate, setEntryDate] = useState(new Date().toISOString().substring(0, 10));
-  const [description, setDescription] = useState('');
-  const [memo, setMemo] = useState('');
-  const [relatedPersonId, setRelatedPersonId] = useState('');
+  // Search & Filter State
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filterAccount, setFilterAccount] = useState('all');
+  const [filterTag, setFilterTag] = useState('all');
+  const [filterReconciled, setFilterReconciled] = useState('all'); // all, yes, no
+  const [filterEvidence, setFilterEvidence] = useState('all'); // all, yes, no
+  const [filterDateRange, setFilterDateRange] = useState('all'); // all, 30, 90, year
   
-  // Start with 2 empty lines
-  const [draftLines, setDraftLines] = useState<DraftLineInput[]>([
-    { accountId: accounts[0]?.id || '', categoryId: '', debitAmount: '', creditAmount: '', memo: '' },
-    { accountId: accounts[1]?.id || '', categoryId: '', debitAmount: '', creditAmount: '', memo: '' }
-  ]);
+  // Quick Query State (Zen Solver)
+  const [activeQuickQuery, setActiveQuickQuery] = useState<string | null>(null);
+  const [expandedTxId, setExpandedTxId] = useState<string | null>(null);
 
-  const [creatorError, setCreatorError] = useState('');
+  // Manual transaction form state
+  const [showAddForm, setShowAddForm] = useState(pathname === '/transactions/new');
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
-  const handleAddLine = () => {
-    setDraftLines([
-      ...draftLines,
-      { accountId: accounts[0]?.id || '', categoryId: '', debitAmount: '', creditAmount: '', memo: '' }
-    ]);
-  };
-
-  const handleRemoveLine = (idx: number) => {
-    if (draftLines.length <= 2) {
-      alert('A valid journal entries transaction draft requires at least 2 lines.');
-      return;
+  useEffect(() => {
+    if (pathname === '/transactions/new') {
+      setShowAddForm(true);
     }
-    setDraftLines(draftLines.filter((_, i) => i !== idx));
-  };
+  }, [pathname]);
 
-  const handleLineChange = (idx: number, field: keyof DraftLineInput, val: string) => {
-    const updated = [...draftLines];
+  const [manualDate, setManualDate] = useState(() => {
+    const draft = localStorage.getItem('qifi_draft_ledger');
+    if (draft) {
+      try {
+        const parsed = JSON.parse(draft);
+        if (parsed.manualDate) return parsed.manualDate;
+      } catch (e) {}
+    }
+    return new Date().toISOString().split('T')[0];
+  });
+
+  const [manualDesc, setManualDesc] = useState(() => {
+    const draft = localStorage.getItem('qifi_draft_ledger');
+    if (draft) {
+      try {
+        const parsed = JSON.parse(draft);
+        if (parsed.manualDesc !== undefined) return parsed.manualDesc;
+      } catch (e) {}
+    }
+    return '';
+  });
+
+  const [manualAmount, setManualAmount] = useState(() => {
+    const draft = localStorage.getItem('qifi_draft_ledger');
+    if (draft) {
+      try {
+        const parsed = JSON.parse(draft);
+        if (parsed.manualAmount !== undefined) return parsed.manualAmount;
+      } catch (e) {}
+    }
+    return '';
+  });
+
+  const [manualSourceAcc, setManualSourceAcc] = useState(() => {
+    const draft = localStorage.getItem('qifi_draft_ledger');
+    if (draft) {
+      try {
+        const parsed = JSON.parse(draft);
+        if (parsed.manualSourceAcc) return parsed.manualSourceAcc;
+      } catch (e) {}
+    }
+    return 'assets-checking';
+  });
+
+  const [manualCatAcc, setManualCatAcc] = useState(() => {
+    const draft = localStorage.getItem('qifi_draft_ledger');
+    if (draft) {
+      try {
+        const parsed = JSON.parse(draft);
+        if (parsed.manualCatAcc) return parsed.manualCatAcc;
+      } catch (e) {}
+    }
+    return 'suspense-uncategorized';
+  });
+
+  const [manualCounterparty, setManualCounterparty] = useState(() => {
+    const draft = localStorage.getItem('qifi_draft_ledger');
+    if (draft) {
+      try {
+        const parsed = JSON.parse(draft);
+        if (parsed.manualCounterparty !== undefined) return parsed.manualCounterparty;
+      } catch (e) {}
+    }
+    return '';
+  });
+
+  const [manualTagsText, setManualTagsText] = useState(() => {
+    const draft = localStorage.getItem('qifi_draft_ledger');
+    if (draft) {
+      try {
+        const parsed = JSON.parse(draft);
+        if (parsed.manualTagsText !== undefined) return parsed.manualTagsText;
+      } catch (e) {}
+    }
+    return '';
+  });
+
+  // Autosave Draft effect
+  const [isDraftSaved, setIsDraftSaved] = useState(false);
+
+  useEffect(() => {
+    const hasValue = !!(
+      manualDesc || 
+      manualAmount || 
+      manualCounterparty || 
+      manualTagsText || 
+      manualDate !== new Date().toISOString().split('T')[0] || 
+      manualSourceAcc !== 'assets-checking' || 
+      manualCatAcc !== 'suspense-uncategorized'
+    );
     
-    // Constraint: Can't have positive debit and credit on same line
-    if (field === 'debitAmount' && Number(val) > 0) {
-      updated[idx].creditAmount = '';
-    } else if (field === 'creditAmount' && Number(val) > 0) {
-      updated[idx].debitAmount = '';
-    }
-
-    updated[idx] = {
-      ...updated[idx],
-      [field]: val
-    };
-    setDraftLines(updated);
-  };
-
-  const handleSubmitLedgerEvent = (e: React.FormEvent) => {
-    e.preventDefault();
-    setCreatorError('');
-
-    if (!description.trim()) {
-      setCreatorError('Please enter a descriptive transaction title.');
-      return;
-    }
-
-    // Prepare entries
-    let totalDebits = 0;
-    let totalCredits = 0;
-    const preparedLines: JournalLine[] = [];
-    const newEntryId = uuid();
-
-    for (let i = 0; i < draftLines.length; i++) {
-      const d = draftLines[i];
-      const deb = Number(d.debitAmount) || 0;
-      const cred = Number(d.creditAmount) || 0;
-
-      if (deb === 0 && cred === 0) {
-        setCreatorError(`Line #${i + 1} balance error: Each line must contain either a non-zero Debit or Credit value.`);
-        return;
-      }
-      if (deb > 0 && cred > 0) {
-        setCreatorError(`Line #${i + 1} validation error: Debit and Credit cannot both carry values on the same line.`);
-        return;
-      }
-      if (deb < 0 || cred < 0) {
-        setCreatorError(`Line #${i + 1} error: Negative entries are strictly forbidden.`);
-        return;
-      }
-
-      totalDebits += deb;
-      totalCredits += cred;
-
-      preparedLines.push({
-        id: uuid(),
-        journal_entry_id: newEntryId,
-        account_id: d.accountId,
-        category_id: d.categoryId || null,
-        debit_amount: deb,
-        credit_amount: cred,
-        memo: d.memo || description,
-        created_at: new Date().toISOString()
-      });
-    }
-
-    // Hard balancing rule
-    const mathDifference = Math.abs(totalDebits - totalCredits);
-    if (mathDifference > 0.01) {
-      setCreatorError(`Double-entry check failed: Out of balance. Total debits ($${totalDebits.toFixed(2)}) must exactly correspond to total credits ($${totalCredits.toFixed(2)}). Delta: $${mathDifference.toFixed(2)}`);
-      return;
-    }
-
-    // Save
-    const parentEntry: JournalEntry = {
-      id: newEntryId,
-      entry_date: entryDate,
-      description,
-      memo,
-      source: 'manual',
-      status: 'posted',
-      related_person_id: relatedPersonId || null,
-      related_bill_id: null,
-      related_debt_id: null,
-      related_asset_id: null,
-      evidence_url: null,
-      import_batch_id: null,
-      created_at: new Date().toISOString(),
-      updated_at: new Date().toISOString()
-    };
-
-    const res = db.postJournalEntry(parentEntry, preparedLines);
-    if (res.success) {
-      alert('Direct general ledger transaction posted successfully!');
-      setIsCreatorOpen(false);
-      triggerRefresh();
+    if (hasValue) {
+      const draft = {
+        manualDate,
+        manualDesc,
+        manualAmount,
+        manualSourceAcc,
+        manualCatAcc,
+        manualCounterparty,
+        manualTagsText
+      };
+      localStorage.setItem('qifi_draft_ledger', JSON.stringify(draft));
+      setIsDraftSaved(true);
     } else {
-      setCreatorError(res.error || 'Unknown post error.');
+      localStorage.removeItem('qifi_draft_ledger');
+      setIsDraftSaved(false);
     }
-  };
+  }, [manualDate, manualDesc, manualAmount, manualSourceAcc, manualCatAcc, manualCounterparty, manualTagsText]);
 
-  const handleReverseEntry = (id: string) => {
-    if (confirm('Verify: Generate an automatic reversing double-entry audit adjust for this posted transaction?')) {
-      const res = db.reverseJournalEntry(id);
-      if (res.success) {
-        alert('Audit reversal posted.');
-        triggerRefresh();
-      } else {
-        alert(`Failed: ${res.error}`);
+  // Collect all unique tags
+  const allTags = useMemo(() => {
+    const tagsSet = new Set<string>();
+    transactions.forEach(t => t.tags.forEach(tag => tagsSet.add(tag)));
+    return Array.from(tagsSet);
+  }, [transactions]);
+
+  // Handle Quick queries calculation
+  const quickQueryResults = useMemo(() => {
+    if (!activeQuickQuery) return null;
+
+    if (activeQuickQuery === 'mom') {
+      // "How much did I send Mom?"
+      const momTxs = transactions.filter(t => 
+        t.counterparty.toLowerCase().includes('mom') || 
+        t.description.toLowerCase().includes('mom') ||
+        t.tags.includes('mom')
+      );
+      const totalSent = momTxs.reduce((sum, t) => sum + (t.amount < 0 ? Math.abs(t.amount) : 0), 0);
+      const totalReceived = momTxs.reduce((sum, t) => sum + (t.amount > 0 ? t.amount : 0), 0);
+      return {
+        title: "Mom's Support Tracker",
+        summary: `You sent Mom a total of $${totalSent.toLocaleString('en-US', { minimumFractionDigits: 2 })} and received $${totalReceived.toLocaleString('en-US', { minimumFractionDigits: 2 })}.`,
+        transactions: momTxs
+      };
+    }
+
+    if (activeQuickQuery === 'gift-vs-loan') {
+      // "What was a gift vs a loan?"
+      const momTxs = transactions.filter(t => 
+        t.counterparty.toLowerCase().includes('mom') || 
+        t.tags.includes('mom')
+      );
+      
+      const gifts = momTxs.filter(t => {
+        // Gift goes to gifts expense category
+        const ledgers = ledgerEntries.filter(le => le.transactionId === t.id);
+        return ledgers.some(le => le.accountId === 'expenses-gifts');
+      });
+
+      const loans = momTxs.filter(t => {
+        // Loan goes to asset loan category
+        const ledgers = ledgerEntries.filter(le => le.transactionId === t.id);
+        return ledgers.some(le => le.accountId === 'assets-loans-mom');
+      });
+
+      const totalGift = gifts.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+      const totalLoan = loans.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+
+      return {
+        title: "Gifts vs. Loans Breakdown",
+        summary: `Gifts total: $${totalGift.toLocaleString('en-US', { minimumFractionDigits: 2 })}. Loans total: $${totalLoan.toLocaleString('en-US', { minimumFractionDigits: 2 })}.`,
+        details: [
+          { label: 'Gifts (Non-repayable Support / Expense)', value: totalGift, count: gifts.length, txs: gifts },
+          { label: 'Loans (Expected to be repaid)', value: totalLoan, count: loans.length, txs: loans }
+        ]
+      };
+    }
+
+    if (activeQuickQuery === 'missing-receipts') {
+      // "What transactions are missing receipts?"
+      const missing = transactions.filter(t => {
+        const hasAttachment = attachments.some(a => a.transactionId === t.id);
+        return !hasAttachment && t.amount < 0; // Outflows without receipt
+      });
+      const totalMissingAmount = missing.reduce((sum, t) => sum + Math.abs(t.amount), 0);
+      return {
+        title: "Transactions Missing Receipts",
+        summary: `Found ${missing.length} expenses missing receipts, totaling $${totalMissingAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}.`,
+        transactions: missing
+      };
+    }
+
+    if (activeQuickQuery === 'unreconciled-statements') {
+      // "Which statements are not reconciled?"
+      const unreconciled = statements.filter(s => !s.isReconciled);
+      return {
+        title: "Unverified Bank Statements",
+        summary: `${unreconciled.length} statement period(s) need matching to verify your transaction logs match actual bank statements.`,
+        statements: unreconciled
+      };
+    }
+
+    if (activeQuickQuery === 'forecast-30-60-90') {
+      // "What bills are coming out in the next 30/60/90 days?"
+      const today = new Date();
+      const projectDate = (days: number) => {
+        const d = new Date();
+        d.setDate(today.getDate() + days);
+        return d;
+      };
+
+      const days30 = projectDate(30);
+      const days60 = projectDate(60);
+      const days90 = projectDate(90);
+
+      // We can generate schedules occurrences
+      const calculateOccurrences = (schedDueDate: string, freq: string, limitDate: Date) => {
+        let occDate = new Date(schedDueDate);
+        const dates: Date[] = [];
+        while (occDate <= limitDate) {
+          dates.push(new Date(occDate));
+          if (freq === 'weekly') occDate.setDate(occDate.getDate() + 7);
+          else if (freq === 'monthly') occDate.setMonth(occDate.getMonth() + 1);
+          else if (freq === 'quarterly') occDate.setMonth(occDate.getMonth() + 3);
+          else if (freq === 'yearly') occDate.setFullYear(occDate.getFullYear() + 1);
+          else break;
+        }
+        return dates;
+      };
+
+      const billForecast = schedules.filter(s => s.amount < 0 && s.isActive).flatMap(sched => {
+        const occurrences = calculateOccurrences(sched.nextDueDate, sched.frequency, days90);
+        return occurrences.map(date => ({
+          name: sched.name,
+          amount: sched.amount,
+          date: date.toISOString().split('T')[0],
+          account: accounts.find(a => a.id === sched.accountId)?.name || 'Expense',
+          source: accounts.find(a => a.id === sched.sourceAccountId)?.name || 'Checking',
+          daysAway: Math.ceil((date.getTime() - today.getTime()) / (1000 * 3600 * 24))
+        }));
+      }).sort((a, b) => a.date.localeCompare(b.date));
+
+      const bill30 = billForecast.filter(b => b.daysAway <= 30);
+      const bill60 = billForecast.filter(b => b.daysAway > 30 && b.daysAway <= 60);
+      const bill90 = billForecast.filter(b => b.daysAway > 60 && b.daysAway <= 90);
+
+      const sum30 = bill30.reduce((sum, b) => sum + Math.abs(b.amount), 0);
+      const sum60 = bill60.reduce((sum, b) => sum + Math.abs(b.amount), 0);
+      const sum90 = bill90.reduce((sum, b) => sum + Math.abs(b.amount), 0);
+
+      return {
+        title: "Short-Term Bill Cash Flow Forecast (90 Days)",
+        summary: `Expected bill payments: $${sum30.toLocaleString('en-US', { minimumFractionDigits: 2 })} next 30 days, $${sum60.toLocaleString('en-US', { minimumFractionDigits: 2 })} days 31-60, and $${sum90.toLocaleString('en-US', { minimumFractionDigits: 2 })} days 61-90.`,
+        forecastGroups: [
+          { title: "Next 30 Days Outflows", total: sum30, items: bill30 },
+          { title: "Days 31 to 60 Outflows", total: sum60, items: bill60 },
+          { title: "Days 61 to 90 Outflows", total: sum90, items: bill90 }
+        ]
+      };
+    }
+
+    if (activeQuickQuery === 'account-changes-month') {
+      // "What accounts changed this month?"
+      // Let's analyze transactions of the current month (June 2026 based on timestamp)
+      const curMonth = '2026-06';
+      const monthLedgers = ledgerEntries.filter(le => le.date.startsWith(curMonth));
+      
+      const changes = accounts.map(acc => {
+        let changeAmount = 0;
+        monthLedgers.forEach(le => {
+          if (le.accountId === acc.id) {
+            if (['asset', 'expense', 'clearing', 'suspense'].includes(acc.type)) {
+              changeAmount += le.debit - le.credit;
+            } else {
+              changeAmount += le.credit - le.debit;
+            }
+          }
+        });
+        return {
+          account: acc,
+          change: changeAmount
+        };
+      }).filter(c => Math.abs(c.change) > 0.01);
+
+      return {
+        title: "Account Balance Velocity (This Month - June 2026)",
+        summary: `A snapshot of ledger activity showing net increases or decreases across accounts for the current cycle.`,
+        changes: changes
+      };
+    }
+
+    return null;
+  }, [activeQuickQuery, transactions, ledgerEntries, attachments, statements, schedules, accounts]);
+
+  // Main Transaction Filtering & Search
+  const filteredTransactions = useMemo(() => {
+    return transactions.filter(t => {
+      // 1. Search text
+      const textMatch = 
+        t.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        t.rawDescription.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        t.counterparty.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      if (!textMatch) return false;
+
+      // 2. Filter account
+      if (filterAccount !== 'all') {
+        const isSource = t.sourceAccountId === filterAccount;
+        // Or check if the target category matched
+        const legs = ledgerEntries.filter(le => le.transactionId === t.id);
+        const isLeg = legs.some(le => le.accountId === filterAccount);
+        if (!isSource && !isLeg) return false;
       }
-    }
-  };
 
-  const formatCurrency = (val: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val);
+      // 3. Filter tag
+      if (filterTag !== 'all' && !t.tags.includes(filterTag)) {
+        return false;
+      }
+
+      // 4. Filter Reconciled
+      if (filterReconciled !== 'all') {
+        const isReconciled = !!t.reconciliationId;
+        if (filterReconciled === 'yes' && !isReconciled) return false;
+        if (filterReconciled === 'no' && isReconciled) return false;
+      }
+
+      // 5. Filter Evidence (Attachment)
+      if (filterEvidence !== 'all') {
+        const hasAttach = attachments.some(a => a.transactionId === t.id);
+        if (filterEvidence === 'yes' && !hasAttach) return false;
+        if (filterEvidence === 'no' && hasAttach) return false;
+      }
+
+      // 6. Date Range filter (using 2026-06-30 as "current" anchor)
+      if (filterDateRange !== 'all') {
+        const txDate = new Date(t.date);
+        const anchor = new Date('2026-06-30');
+        const diffMs = anchor.getTime() - txDate.getTime();
+        const diffDays = Math.ceil(diffMs / (1000 * 3600 * 24));
+        if (filterDateRange === '30' && diffDays > 30) return false;
+        if (filterDateRange === '90' && diffDays > 90) return false;
+      }
+
+      return true;
+    });
+  }, [transactions, searchTerm, filterAccount, filterTag, filterReconciled, filterEvidence, filterDateRange, ledgerEntries, attachments]);
+
+  const handleAddManualSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!manualDesc || !manualAmount || isNaN(Number(manualAmount))) return;
+
+    const amount = Number(manualAmount);
+    const tags = manualTagsText.split(',').map(s => s.trim().toLowerCase()).filter(Boolean);
+
+    if (editingTxId) {
+      updateTransaction(editingTxId, {
+        date: manualDate,
+        description: manualDesc,
+        amount,
+        sourceAccountId: manualSourceAcc,
+        tags,
+        counterparty: manualCounterparty || 'Cash/Adjustment'
+      }, manualCatAcc);
+    } else {
+      addManualTransaction({
+        date: manualDate,
+        description: manualDesc,
+        rawDescription: 'MANUAL ENTRY: ' + manualDesc,
+        amount,
+        sourceAccountId: manualSourceAcc,
+        tags,
+        counterparty: manualCounterparty || 'Cash/Adjustment'
+      }, manualCatAcc);
+    }
+
+    // Reset Form & Clear Draft
+    setManualDesc('');
+    setManualAmount('');
+    setManualCounterparty('');
+    setManualTagsText('');
+    setEditingTxId(null);
+    localStorage.removeItem('qifi_draft_ledger');
+    setIsDraftSaved(false);
+    setShowAddForm(false);
   };
 
   return (
-    <div className="space-y-6" id="ledger_view_block">
-      {/* Upper Panel */}
-      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center py-2 border-b border-gray-100">
+    <div className="space-y-6">
+      {/* HEADER SECTION */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
-          <h2 className="text-xl font-bold tracking-tight text-slate-900 font-sans" id="ledger_main_heading">
-            Double-Entry General Ledger Accounts Audit
+          <h2 className="text-2xl font-bold tracking-tight text-white font-display" id="ledger-title">
+            Double-Entry Money Ledger
           </h2>
-          <p className="text-xs text-slate-500 font-mono">
-            COMPLIANCE METRICS: HARD EQUILIBRIUM RULES ENFORCED • DEBITS MUST EQUAL CREDITS
+          <p className="text-sm text-zinc-400 font-sans mt-1">
+            Real posted transactions with robust balanced credit/debit posting.
           </p>
         </div>
-        <button 
-          onClick={() => {
-            setDraftLines([
-              { accountId: accounts[0]?.id || '', categoryId: '', debitAmount: '', creditAmount: '', memo: '' },
-              { accountId: accounts[1]?.id || '', categoryId: '', debitAmount: '', creditAmount: '', memo: '' }
-            ]);
-            setDescription('');
-            setMemo('');
-            setRelatedPersonId('');
-            setCreatorError('');
-            setIsCreatorOpen(true);
-          }}
-          className="mt-3 sm:mt-0 flex items-center gap-1.5 px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white text-xs font-semibold rounded-lg shadow-sm font-sans focus:outline-none cursor-pointer"
-          id="btn_open_ledger_creator"
+        <button
+          onClick={() => setShowAddForm(!showAddForm)}
+          className="inline-flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-sm font-medium shadow-lg hover:shadow-emerald-950/50 transition-all cursor-pointer border border-emerald-500/30 self-start sm:self-center"
+          id="btn-add-manual"
         >
-          <GitCompare className="w-4 h-4 text-emerald-450" />
-          Direct Split-Entry Form
+          {showAddForm ? <X size={16} /> : <Plus size={16} />}
+          {showAddForm ? 'Close Editor' : 'Manual Ledger Post'}
         </button>
       </div>
 
-      {/* Main Journal Feed */}
-      <div className="space-y-5" id="ledger_journal_feed">
-        {entries.length === 0 ? (
-          <div className="p-16 text-center bg-white border border-gray-150 rounded-xl text-slate-400 text-xs font-sans">
-            No journal entries exist within persistent storage. Click Split-Entry to generate manual postings.
+      {/* MANUAL TRANSACTION POSTING FORM */}
+      {showAddForm && (
+        <form onSubmit={handleAddManualSubmit} className="bg-zinc-900/60 p-6 rounded-2xl border border-zinc-800/80 shadow-2xl backdrop-blur-md space-y-4 animate-fadeIn">
+          <h3 className="font-semibold text-zinc-100 text-base flex items-center gap-2">
+            <DollarSign className="text-emerald-400" size={18} />
+            {editingTxId ? 'Edit Balanced Ledger Entry' : 'Post New Double-Entry Balanced Entry'}
+          </h3>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Date */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 mb-1">Date</label>
+              <input 
+                type="date" 
+                value={manualDate} 
+                onChange={e => setManualDate(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25"
+                required
+              />
+            </div>
+            {/* Amount */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 mb-1">Amount (Negative = Expense, Positive = Income)</label>
+              <input 
+                type="number" 
+                step="0.01"
+                placeholder="-50.00 or 1500.00"
+                value={manualAmount} 
+                onChange={e => setManualAmount(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25 placeholder:text-zinc-600"
+                required
+              />
+            </div>
+            {/* Counterparty */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 mb-1">Merchant / Person</label>
+              <input 
+                type="text" 
+                placeholder="Mom, Apple, Acme Corp"
+                value={manualCounterparty} 
+                onChange={e => setManualCounterparty(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25 placeholder:text-zinc-600"
+              />
+            </div>
           </div>
-        ) : (
-          [...entries]
-            .sort((a, b) => new Date(b.entry_date).getTime() - new Date(a.entry_date).getTime())
-            .map(entry => {
-              const entryLines = lines.filter(l => l.journal_entry_id === entry.id);
-              const totalDebitSum = entryLines.reduce((sum, l) => sum + l.debit_amount, 0);
-              const relatedPerson = people.find(p => p.id === entry.related_person_id);
 
-              const isPosted = entry.status === 'posted';
-              const isVoided = entry.status === 'voided';
-              const isDraft = entry.status === 'draft';
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            {/* Description */}
+            <div className="md:col-span-2">
+              <label className="block text-xs font-semibold text-zinc-400 mb-1">Description / Memo</label>
+              <input 
+                type="text" 
+                placeholder="Software licensing, caregiving gift, loan payback"
+                value={manualDesc} 
+                onChange={e => setManualDesc(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25 placeholder:text-zinc-600"
+                required
+              />
+            </div>
+            {/* Tags */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 mb-1">Tags (Comma separated)</label>
+              <input 
+                type="text" 
+                placeholder="mom, business, tax"
+                value={manualTagsText} 
+                onChange={e => setManualTagsText(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-100 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25 placeholder:text-zinc-600"
+              />
+            </div>
+          </div>
 
-              return (
-                <div 
-                  key={entry.id} 
-                  className={`bg-white rounded-xl border p-4 space-y-3 transition-all ${isVoided ? 'opacity-60 bg-gray-50/50 border-gray-200' : 'border-gray-200 shadow-xs'}`}
-                  id={`je_block_${entry.id}`}
-                >
-                  {/* Ledger Row Top Metadata */}
-                  <div className="flex flex-wrap items-start justify-between gap-3 border-b border-gray-50 pb-2.5">
-                    <div className="space-y-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className="p-1 px-2.5 bg-slate-50 border border-slate-150 rounded text-xs font-mono font-bold text-slate-700">
-                          {entry.entry_date}
-                        </span>
-                        <h3 className="text-xs font-bold text-slate-850 font-sans tracking-tight">
-                          {entry.description}
-                        </h3>
-                        {isPosted && (
-                          <span className="p-0.5 px-2 tracking-wider text-[8px] font-mono font-black text-emerald-700 bg-emerald-50 rounded">POSTED</span>
-                        )}
-                        {isVoided && (
-                          <span className="p-0.5 px-2 tracking-wider text-[8px] font-mono font-black text-slate-400 bg-slate-100 rounded">VOIDED</span>
-                        )}
-                        {isDraft && (
-                          <span className="p-0.5 px-2 tracking-wider text-[8px] font-mono font-black text-blue-700 bg-blue-50 rounded font-normal">DRAFT</span>
-                        )}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Source Account */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 mb-1">Bank Account / Card Used</label>
+              <select
+                value={manualSourceAcc}
+                onChange={e => setManualSourceAcc(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25"
+              >
+                {accounts.filter(a => ['asset', 'liability'].includes(a.type)).map(a => (
+                  <option key={a.id} value={a.id}>({a.code}) {a.name} - ${getAccountBalance(a.id).toFixed(2)}</option>
+                ))}
+              </select>
+            </div>
+            {/* Category Account */}
+            <div>
+              <label className="block text-xs font-semibold text-zinc-400 mb-1">Category (Where did the money go or come from?)</label>
+              <select
+                value={manualCatAcc}
+                onChange={e => setManualCatAcc(e.target.value)}
+                className="w-full bg-zinc-950 border border-zinc-800 rounded-xl px-3 py-2 text-sm text-zinc-200 focus:outline-none focus:border-emerald-500/50 focus:ring-1 focus:ring-emerald-500/25"
+              >
+                {accounts.filter(a => !['asset', 'liability'].includes(a.type) || a.id === 'assets-loans-mom').map(a => (
+                  <option key={a.id} value={a.id}>({a.code}) {a.name}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+
+          <div className="flex justify-end items-center gap-3 pt-2">
+            {isDraftSaved && (
+              <span className="text-zinc-500 text-[11px] flex items-center gap-1.5 animate-fadeIn mr-auto">
+                <span className="w-1.5 h-1.5 bg-emerald-500 rounded-full animate-pulse" />
+                Draft autosaved
+              </span>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setManualDesc('');
+                setManualAmount('');
+                setManualCounterparty('');
+                setManualTagsText('');
+                setManualDate(new Date().toISOString().split('T')[0]);
+                setManualSourceAcc('assets-checking');
+                setManualCatAcc('suspense-uncategorized');
+                setEditingTxId(null);
+                localStorage.removeItem('qifi_draft_ledger');
+                setIsDraftSaved(false);
+                setShowAddForm(false);
+              }}
+              className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-4 py-2 rounded-xl text-sm font-medium transition-all cursor-pointer"
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 py-2 rounded-xl text-sm font-semibold shadow-md transition-all cursor-pointer"
+            >
+              {editingTxId ? 'Save Changes' : 'Add to Log'}
+            </button>
+          </div>
+        </form>
+      )}
+
+      {/* ZEN SOLVER (QUICK ANSWERS PANEL) */}
+      <div className="bg-amber-500/5 border border-amber-500/20 p-5 rounded-2xl shadow-xl">
+        <h3 className="text-sm font-semibold text-amber-400 font-display flex items-center gap-2 mb-3">
+          <HelpCircle className="text-amber-500" size={18} />
+          Zen Financial Assistant — Click a question to ask about your money
+        </h3>
+        <div className="flex flex-wrap gap-2">
+          {[
+            { id: 'mom', q: 'How much did I send Mom?' },
+            { id: 'gift-vs-loan', q: 'What was a gift vs a loan?' },
+            { id: 'missing-receipts', q: 'Which transactions are missing receipts?' },
+            { id: 'unreconciled-statements', q: 'Which statements are not reconciled?' },
+            { id: 'forecast-30-60-90', q: 'What bills are coming out in next 30/60/90 days?' },
+            { id: 'account-changes-month', q: 'What accounts changed this month?' }
+          ].map(qq => (
+            <button
+              key={qq.id}
+              onClick={() => setActiveQuickQuery(activeQuickQuery === qq.id ? null : qq.id)}
+              className={`px-3 py-1.5 rounded-xl text-xs font-medium border transition-all cursor-pointer ${
+                activeQuickQuery === qq.id
+                  ? 'bg-amber-500/20 text-amber-300 border-amber-500/30 shadow-md'
+                  : 'bg-zinc-900/60 text-zinc-300 border-zinc-800 hover:bg-zinc-800 hover:text-zinc-100'
+              }`}
+            >
+              {qq.q}
+            </button>
+          ))}
+        </div>
+
+        {/* QUICK QUERY EXPANDED RESULTS */}
+        {activeQuickQuery && quickQueryResults && (
+          <div className="mt-4 p-4 bg-zinc-950/60 rounded-xl border border-amber-500/20 animate-fadeIn space-y-3">
+            <div className="flex items-center justify-between">
+              <h4 className="font-semibold text-zinc-200 text-sm font-display">{quickQueryResults.title}</h4>
+              <button onClick={() => setActiveQuickQuery(null)} className="text-zinc-500 hover:text-zinc-300">
+                <X size={14} />
+              </button>
+            </div>
+            <p className="text-sm text-zinc-300 bg-amber-500/5 p-3 rounded-xl border border-amber-500/10 font-sans">
+              {quickQueryResults.summary}
+            </p>
+
+            {/* List for generic results */}
+            {quickQueryResults.transactions && (
+              <div className="max-h-60 overflow-y-auto space-y-1 divide-y divide-zinc-800/40 pr-1">
+                {quickQueryResults.transactions.length === 0 ? (
+                  <p className="text-xs text-zinc-500 py-2">No matching transactions found.</p>
+                ) : (
+                  quickQueryResults.transactions.map((t: Transaction) => (
+                    <div key={t.id} className="flex justify-between items-center py-2 text-xs">
+                      <div>
+                        <div className="font-medium text-zinc-200">{t.description}</div>
+                        <div className="text-zinc-400">{t.date} · via {accounts.find(a => a.id === t.sourceAccountId)?.name}</div>
                       </div>
-                      
-                      <p className="text-[10px] text-slate-450 font-mono">
-                        Source: <span className="uppercase">{entry.source}</span> • Ref: {entry.id} • Party: {relatedPerson?.display_name || 'NONE'}
-                      </p>
-                    </div>
-
-                    {/* Monetary total recap */}
-                    <div className="text-right">
-                      <span className="text-[9px] text-slate-400 font-mono block uppercase">Entry Book Value</span>
-                      <span className="text-xs font-mono font-extrabold text-slate-900">
-                        {formatCurrency(totalDebitSum)}
+                      <span className={`font-semibold ${t.amount < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                        {t.amount < 0 ? '-' : '+'}${Math.abs(t.amount).toFixed(2)}
                       </span>
                     </div>
-                  </div>
+                  ))
+                )}
+              </div>
+            )}
 
-                  {/* Individual Double-Entry Lines Table */}
-                  <div className="overflow-x-auto" id={`jl_table_container_${entry.id}`}>
-                    <table className="w-full text-left text-[11px] font-sans">
-                      <thead>
-                        <tr className="text-[9px] font-bold text-slate-400 uppercase font-mono tracking-wider border-b border-gray-100">
-                          <th className="pb-1.5 pl-2">Gl Account Code</th>
-                          <th className="pb-1.5">Category Matching</th>
-                          <th className="pb-1.5">Memo Log</th>
-                          <th className="pb-1.5 text-right font-mono pr-4">Debit (+)</th>
-                          <th className="pb-1.5 text-right font-mono pr-2">Credit (-)</th>
-                        </tr>
-                      </thead>
-                      <tbody className="divide-y divide-gray-50/70">
-                        {entryLines.map(line => {
-                          const acctName = accounts.find(a => a.id === line.account_id)?.name || 'Account Out of chart';
-                          const catName = categories.find(c => c.id === line.category_id)?.name || 'NONE';
-                          
-                          return (
-                            <tr key={line.id} className="hover:bg-slate-50/20">
-                              <td className="py-2 pl-2 font-bold text-slate-700">{acctName}</td>
-                              <td className="py-2 text-slate-500 capitalize">{catName}</td>
-                              <td className="py-2 text-slate-450 italic">{line.memo || 'General ledger posting'}</td>
-                              <td className="py-2 text-right font-mono text-emerald-700 font-extrabold pr-4">
-                                {line.debit_amount > 0 ? formatCurrency(line.debit_amount) : '0.00'}
-                              </td>
-                              <td className="py-2 text-right font-mono text-rose-600 font-bold pr-2">
-                                {line.credit_amount > 0 ? formatCurrency(line.credit_amount) : '0.00'}
-                              </td>
-                            </tr>
-                          );
-                        })}
-                      </tbody>
-                    </table>
-                  </div>
-
-                  {/* Action items on custom ledger line */}
-                  {entry.memo && (
-                    <div className="p-2 bg-slate-50 border border-slate-100 rounded text-[10px] text-slate-500 font-sans italic">
-                      Memo notes: &ldquo;{entry.memo}&rdquo;
+            {/* Structured details for Mom loan vs gift */}
+            {quickQueryResults.details && (
+              <div className="space-y-4">
+                {quickQueryResults.details.map((g, idx) => (
+                  <div key={idx} className="space-y-2 border-t border-zinc-800/60 pt-3 first:border-0 first:pt-0">
+                    <div className="flex justify-between items-center text-xs font-semibold text-zinc-300">
+                      <span>{g.label} ({g.count} tx)</span>
+                      <span className="text-zinc-100">${g.value.toFixed(2)}</span>
                     </div>
-                  )}
+                    <div className="max-h-40 overflow-y-auto space-y-1 pl-3 border-l-2 border-zinc-800">
+                      {g.txs.map((t: Transaction) => (
+                        <div key={t.id} className="flex justify-between items-center py-1 text-xs">
+                          <span className="text-zinc-400">{t.date} - {t.description}</span>
+                          <span className="text-zinc-200 font-medium">${Math.abs(t.amount).toFixed(2)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
 
-                  {isPosted && (
-                    <div className="flex justify-end pt-2 border-t border-slate-50">
-                      <button 
-                        onClick={() => handleReverseEntry(entry.id)}
-                        className="text-[10px] font-mono font-extrabold p-1 px-2.5 text-rose-700 border border-rose-100 bg-rose-50 hover:bg-rose-955 hover:text-white transition-all rounded uppercase cursor-pointer"
-                        id={`btn_direct_reverse_${entry.id}`}
-                      >
-                        File Reversal Entry Adjustment
-                      </button>
+            {/* Statements results */}
+            {quickQueryResults.statements && (
+              <div className="space-y-2 text-xs">
+                {quickQueryResults.statements.length === 0 ? (
+                  <p className="text-zinc-500">Perfect! All statement cycles are reconciled.</p>
+                ) : (
+                  quickQueryResults.statements.map(s => (
+                    <div key={s.id} className="p-3 bg-zinc-900/80 rounded-xl flex justify-between items-center border border-zinc-800/80">
+                      <div>
+                        <div className="font-medium text-zinc-200">{accounts.find(a => a.id === s.accountId)?.name}</div>
+                        <div className="text-zinc-400">{s.startDate} to {s.endDate}</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="font-semibold text-zinc-300 text-sm">Variance: ${(s.closingBalance - s.openingBalance).toFixed(2)}</div>
+                        <div className="text-amber-400 flex items-center gap-1 mt-0.5 justify-end">
+                          <AlertCircle size={12} /> Pending Reconciliation
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            )}
+
+            {/* Forecast groups */}
+            {quickQueryResults.forecastGroups && (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                {quickQueryResults.forecastGroups.map((g, idx) => (
+                  <div key={idx} className="bg-zinc-900/60 p-3 rounded-xl border border-zinc-800/80 space-y-2 text-xs">
+                    <div className="flex justify-between items-center font-semibold text-zinc-300 border-b border-zinc-850 pb-1.5">
+                      <span>{g.title}</span>
+                      <span className="text-rose-400">${g.total.toFixed(2)}</span>
+                    </div>
+                    <div className="space-y-2 max-h-40 overflow-y-auto">
+                      {g.items.length === 0 ? (
+                        <p className="text-zinc-500 py-2 italic text-center">No outflows</p>
+                      ) : (
+                        g.items.map((item, i) => (
+                          <div key={i} className="text-[11px] leading-snug">
+                            <div className="flex justify-between font-medium text-zinc-300">
+                              <span className="truncate max-w-[110px]">{item.name}</span>
+                              <span className="text-rose-400">${Math.abs(item.amount).toFixed(2)}</span>
+                            </div>
+                            <div className="text-zinc-500 flex justify-between">
+                              <span>Due {item.date}</span>
+                              <span className="font-medium text-zinc-400">({item.daysAway}d away)</span>
+                            </div>
+                          </div>
+                        ))
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Account Changes month */}
+            {quickQueryResults.changes && (
+              <div className="space-y-2 text-xs max-h-60 overflow-y-auto divide-y divide-zinc-800/40">
+                {quickQueryResults.changes.map((c, i) => (
+                  <div key={i} className="flex justify-between items-center py-2 first:pt-0">
+                    <div>
+                      <div className="font-semibold text-zinc-200">{c.account.name}</div>
+                      <div className="text-zinc-500 uppercase text-[9px] tracking-wider">{c.account.type}</div>
+                    </div>
+                    <div className={`font-semibold ${
+                      c.change > 0 
+                        ? 'text-emerald-400'
+                        : 'text-rose-400'
+                    }`}>
+                      {c.change > 0 ? '+' : ''}${c.change.toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* FILTER CONTROLS */}
+      <div className="bg-zinc-900/40 p-4 rounded-2xl border border-zinc-800/80 shadow-xl backdrop-blur-sm space-y-3">
+        <div className="flex flex-col md:flex-row gap-3 items-center justify-between">
+          {/* Search Box */}
+          <div className="relative w-full md:max-w-xs">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-zinc-500" size={16} />
+            <input
+              type="text"
+              placeholder="Search transactions..."
+              value={searchTerm}
+              onChange={e => setSearchTerm(e.target.value)}
+              className="w-full bg-zinc-950 border border-zinc-800 rounded-xl pl-10 pr-4 py-2.5 text-sm text-zinc-100 placeholder:text-zinc-500 focus:outline-none focus:border-zinc-700 focus:ring-1 focus:ring-emerald-500/20"
+            />
+          </div>
+
+          {/* Account Filter */}
+          <div className="flex flex-wrap gap-2 w-full md:w-auto justify-end">
+            <div className="flex items-center gap-1.5 text-xs text-zinc-400 font-medium">
+              <Filter size={14} />
+              Filters:
+            </div>
+            
+            {/* Account Select */}
+            <select
+              value={filterAccount}
+              onChange={e => setFilterAccount(e.target.value)}
+              className="bg-zinc-950/80 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 font-medium focus:outline-none focus:border-zinc-700"
+            >
+              <option value="all">All Accounts</option>
+              {accounts.map(a => (
+                <option key={a.id} value={a.id}>{a.name}</option>
+              ))}
+            </select>
+
+            {/* Tag Select */}
+            <select
+              value={filterTag}
+              onChange={e => setFilterTag(e.target.value)}
+              className="bg-zinc-950/80 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 font-medium focus:outline-none focus:border-zinc-700"
+            >
+              <option value="all">All Tags</option>
+              {allTags.map(tag => (
+                <option key={tag} value={tag}>#{tag}</option>
+              ))}
+            </select>
+
+            {/* Reconciled Select */}
+            <select
+              value={filterReconciled}
+              onChange={e => setFilterReconciled(e.target.value)}
+              className="bg-zinc-950/80 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 font-medium focus:outline-none focus:border-zinc-700"
+            >
+              <option value="all">Matching: All</option>
+              <option value="yes">Verified Matches Only</option>
+              <option value="no">Unverified Only</option>
+            </select>
+
+            {/* Evidence Select */}
+            <select
+              value={filterEvidence}
+              onChange={e => setFilterEvidence(e.target.value)}
+              className="bg-zinc-950/80 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 font-medium focus:outline-none focus:border-zinc-700"
+            >
+              <option value="all">Receipts: All</option>
+              <option value="yes">Has Receipt</option>
+              <option value="no">Missing Receipt</option>
+            </select>
+
+            {/* Date Select */}
+            <select
+              value={filterDateRange}
+              onChange={e => setFilterDateRange(e.target.value)}
+              className="bg-zinc-950/80 border border-zinc-800 rounded-lg px-2.5 py-1.5 text-xs text-zinc-300 font-medium focus:outline-none focus:border-zinc-700"
+            >
+              <option value="all">Date: All time</option>
+              <option value="30">Last 30 Days</option>
+              <option value="90">Last 90 Days</option>
+            </select>
+          </div>
+        </div>
+      </div>
+
+      {/* LEDGER ENTRIES LIST */}
+      <div className="bg-zinc-900/40 rounded-2xl border border-zinc-800/80 shadow-2xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-zinc-800/80 flex justify-between items-center bg-zinc-900/80">
+          <span className="font-bold text-zinc-200 text-sm font-display">
+            My Transactions Log ({filteredTransactions.length} Items)
+          </span>
+          <span className="text-xs text-zinc-500 font-mono">
+            Fully Accounted & Balanced
+          </span>
+        </div>
+
+        {filteredTransactions.length === 0 ? (
+          <div className="p-8 text-center">
+            <p className="text-zinc-500 text-sm">No transactions match your query filters.</p>
+            <button 
+              onClick={() => {
+                setSearchTerm('');
+                setFilterAccount('all');
+                setFilterTag('all');
+                setFilterReconciled('all');
+                setFilterEvidence('all');
+                setFilterDateRange('all');
+              }}
+              className="mt-3 text-xs font-semibold text-amber-400 hover:text-amber-300 hover:underline cursor-pointer"
+            >
+              Reset Filters
+            </button>
+          </div>
+        ) : (
+          <div className="divide-y divide-zinc-800/40">
+            {filteredTransactions.map((tx: Transaction) => {
+              const isExpanded = expandedTxId === tx.id;
+              const hasReceipt = attachments.some(a => a.transactionId === tx.id);
+              const txLedgers = ledgerEntries.filter(le => le.transactionId === tx.id);
+              const srcAccount = accounts.find(a => a.id === tx.sourceAccountId);
+
+              return (
+                <div key={tx.id} className="transition-all hover:bg-zinc-900/30">
+                  {/* Ledger Header Row */}
+                  <div 
+                    onClick={() => setExpandedTxId(isExpanded ? null : tx.id)}
+                    className="px-5 py-3.5 flex items-center justify-between gap-4 cursor-pointer text-sm"
+                  >
+                    <div className="flex items-center gap-3 min-w-0 flex-1">
+                      {/* Flow Indicator Icon */}
+                      <div className={`p-2 rounded-xl shrink-0 ${
+                        tx.amount < 0 
+                          ? 'bg-rose-950/30 text-rose-400 border border-rose-900/30' 
+                          : 'bg-emerald-950/30 text-emerald-400 border border-emerald-900/30'
+                      }`}>
+                        {tx.amount < 0 ? <ArrowDownLeft size={16} /> : <ArrowUpRight size={16} />}
+                      </div>
+
+                      {/* Merchant, Date and Source Account */}
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="font-semibold text-zinc-100 truncate">{tx.counterparty}</span>
+                          {tx.reconciliationId && (
+                            <span className="inline-flex items-center gap-0.5 bg-emerald-950/30 text-emerald-400 text-[10px] px-1.5 py-0.5 rounded-full font-medium shrink-0 border border-emerald-900/30">
+                              <CheckCircle size={10} /> Reconciled
+                            </span>
+                          )}
+                        </div>
+                        <div className="text-xs text-zinc-400 flex flex-wrap items-center gap-x-2 gap-y-0.5 mt-0.5">
+                          <span>{tx.date}</span>
+                          <span>•</span>
+                          <span className="font-medium text-zinc-300">{tx.description}</span>
+                          <span>•</span>
+                          <span className="text-zinc-400 font-mono text-[10px] bg-zinc-800/60 px-1 py-0.2 rounded border border-zinc-700/30">{srcAccount?.name}</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Tags, Evidence Icon and Amount */}
+                    <div className="flex items-center gap-4 shrink-0">
+                      {/* Tags (Desktop only) */}
+                      <div className="hidden sm:flex items-center gap-1">
+                        {tx.tags.slice(0, 2).map(tag => (
+                          <span key={tag} className="bg-zinc-800/40 text-zinc-300 text-[10px] px-2 py-0.5 rounded-full flex items-center gap-0.5 border border-zinc-700/20">
+                            <Tag size={8} /> {tag}
+                          </span>
+                        ))}
+                        {tx.tags.length > 2 && (
+                          <span className="text-zinc-500 text-[9px]">+{tx.tags.length - 2}</span>
+                        )}
+                      </div>
+
+                      {/* Evidence Icon indicator */}
+                      <div className="text-zinc-500">
+                        {hasReceipt ? (
+                          <FileText size={16} className="text-emerald-400" title="Has Attachment" />
+                        ) : (
+                          <AlertCircle size={16} className="text-amber-400" title="Missing Receipt" />
+                        )}
+                      </div>
+
+                      {/* Amount */}
+                      <div className="text-right min-w-[70px]">
+                        <span className={`font-semibold font-mono ${tx.amount < 0 ? 'text-rose-400' : 'text-emerald-400'}`}>
+                          {tx.amount < 0 ? '-' : '+'}${Math.abs(tx.amount).toFixed(2)}
+                        </span>
+                      </div>
+
+                      {/* Toggle Chevron */}
+                      <div className="text-zinc-500">
+                        {isExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Expanded Double Entry Account Ledgers (Balanced Debits & Credits) */}
+                  {isExpanded && (
+                    <div className="px-5 pb-4 pt-1 bg-zinc-950/60 border-t border-dashed border-zinc-800/60 animate-fadeIn space-y-3">
+                      {/* Double Entry Ledger Details */}
+                      <div className="rounded-xl border border-zinc-850 bg-zinc-900/40 overflow-hidden max-w-3xl">
+                        <div className="px-3 py-1.5 bg-zinc-900 text-[10px] font-bold text-zinc-400 uppercase tracking-wider grid grid-cols-12 gap-2 border-b border-zinc-850">
+                          <div className="col-span-6">Category Affected</div>
+                          <div className="col-span-3 text-right">Increase (+)</div>
+                          <div className="col-span-3 text-right">Decrease (-)</div>
+                        </div>
+                        <div className="divide-y divide-zinc-800/40">
+                          {txLedgers.map((le: LedgerEntry) => {
+                            const leAcc = accounts.find(a => a.id === le.accountId);
+                            return (
+                              <div key={le.id} className="px-3 py-2 text-xs grid grid-cols-12 gap-2 text-zinc-300">
+                                <div className="col-span-6 flex items-center gap-1.5">
+                                  <span className="font-mono text-[10px] bg-zinc-800 text-zinc-400 px-1 rounded border border-zinc-700/30">{leAcc?.code}</span>
+                                  <span className="font-semibold">{leAcc?.name}</span>
+                                  <span className="text-[10px] text-zinc-500 uppercase">({leAcc?.type})</span>
+                                </div>
+                                <div className="col-span-3 text-right font-mono font-medium text-zinc-300">
+                                  {le.debit > 0 ? `$${le.debit.toFixed(2)}` : '—'}
+                                </div>
+                                <div className="col-span-3 text-right font-mono font-medium text-zinc-300">
+                                  {le.credit > 0 ? `$${le.credit.toFixed(2)}` : '—'}
+                                </div>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {/* Summary total validation row */}
+                        <div className="px-3 py-1.5 bg-zinc-950/60 text-[10px] font-semibold text-zinc-400 grid grid-cols-12 gap-2 border-t border-zinc-850">
+                          <div className="col-span-6 text-right">Balanced Total:</div>
+                          <div className="col-span-3 text-right font-mono text-emerald-400 font-bold">
+                            ${txLedgers.reduce((sum, le) => sum + le.debit, 0).toFixed(2)}
+                          </div>
+                          <div className="col-span-3 text-right font-mono text-emerald-400 font-bold">
+                            ${txLedgers.reduce((sum, le) => sum + le.credit, 0).toFixed(2)}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Transaction Management Controls */}
+                      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-zinc-400">
+                        {/* Meta */}
+                        <div>
+                          <span>Posted on: <span className="font-medium text-zinc-300">{new Date(tx.createdAt).toLocaleString()}</span></span>
+                          {tx.rawDescription && tx.rawDescription !== tx.description && (
+                            <span className="ml-3 italic">Raw Bank String: <span className="font-mono text-[11px] text-zinc-500">{tx.rawDescription}</span></span>
+                          )}
+                        </div>
+
+                        {/* Delete Entry with Inline Confirmation to Bypass Iframe Sandbox Popup Blocking */}
+                        {confirmDeleteId === tx.id ? (
+                          <div className="flex items-center gap-2 bg-rose-950/20 px-3 py-1.5 rounded-xl border border-rose-500/20 text-xs">
+                            <span className="text-rose-400 font-medium">Void transaction permanently?</span>
+                            <button
+                              onClick={() => {
+                                deleteTransaction(tx.id);
+                                setConfirmDeleteId(null);
+                              }}
+                              className="text-white bg-rose-600 hover:bg-rose-500 font-bold px-2.5 py-1 rounded-lg cursor-pointer transition-colors"
+                            >
+                              Yes, Void
+                            </button>
+                            <button
+                              onClick={() => setConfirmDeleteId(null)}
+                              className="text-zinc-400 hover:text-zinc-200 font-medium px-2 py-1 rounded-lg cursor-pointer"
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-4">
+                            <button
+                              onClick={() => {
+                                setEditingTxId(tx.id);
+                                setManualDate(tx.date);
+                                setManualAmount(String(tx.amount));
+                                setManualCounterparty(tx.counterparty || '');
+                                setManualDesc(tx.description);
+                                setManualTagsText(tx.tags.join(', '));
+                                setManualSourceAcc(tx.sourceAccountId);
+
+                                const txLedgers = ledgerEntries.filter(le => le.transactionId === tx.id);
+                                const catLedger = txLedgers.find(le => le.accountId !== tx.sourceAccountId);
+                                if (catLedger) {
+                                  setManualCatAcc(catLedger.accountId);
+                                } else {
+                                  setManualCatAcc('suspense-uncategorized');
+                                }
+
+                                setShowAddForm(true);
+                                window.scrollTo({ top: 0, behavior: 'smooth' });
+                              }}
+                              className="inline-flex items-center gap-1.5 text-emerald-400 hover:text-emerald-300 font-semibold cursor-pointer py-1"
+                            >
+                              <Edit2 size={13} /> Edit Transaction
+                            </button>
+                            <button
+                              onClick={() => setConfirmDeleteId(tx.id)}
+                              className="inline-flex items-center gap-1.5 text-red-400 hover:text-red-300 font-semibold cursor-pointer py-1"
+                            >
+                              <Trash2 size={13} /> Void Ledger Transaction
+                            </button>
+                          </div>
+                        )}
+                      </div>
                     </div>
                   )}
                 </div>
               );
-            })
+            })}
+          </div>
         )}
       </div>
-
-      {/* Split/Journal Multi-line Entry Form Drawer Modal */}
-      {isCreatorOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center z-50 p-4" id="split_creator_overlay">
-          <div className="bg-white rounded-xl shadow-lg border border-slate-300 w-full max-w-4xl overflow-hidden animate-fade-in flex flex-col max-h-[90vh]" id="split_creator_content">
-            <div className="p-4 bg-slate-950 text-white flex justify-between items-center flex-shrink-0">
-              <div className="flex items-center gap-2">
-                <GitCompare className="w-5 h-5 text-emerald-450 animate-pulse" />
-                <h3 className="text-xs font-black tracking-widest uppercase font-mono">
-                  Direct Multi-Line Split Entry Creator
-                </h3>
-              </div>
-              <button 
-                onClick={() => setIsCreatorOpen(false)}
-                className="text-slate-400 hover:text-white font-mono text-xs cursor-pointer"
-                id="btn_close_split_upper"
-              >
-                Close (✖)
-              </button>
-            </div>
-
-            {/* Split Creator Form Body */}
-            <form onSubmit={handleSubmitLedgerEvent} className="p-5 overflow-y-auto space-y-4 flex-1" id="split_creator_form">
-              {/* Top Meta info */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4 border-b border-slate-100 pb-4">
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase font-mono mb-1">Accounting Entry Date</label>
-                  <input 
-                    type="date"
-                    required
-                    value={entryDate}
-                    onChange={e => setEntryDate(e.target.value)}
-                    className="w-full p-2 text-xs border border-slate-200 rounded text-slate-800"
-                    id="split_input_date"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase font-mono mb-1">Journal Entry description</label>
-                  <input 
-                    type="text"
-                    required
-                    value={description}
-                    onChange={e => setDescription(e.target.value)}
-                    placeholder="e.g., Paycheck payroll deposit w/ tax splits"
-                    className="w-full p-2 text-xs border border-slate-200 rounded text-slate-800"
-                    id="split_input_desc"
-                  />
-                </div>
-
-                <div>
-                  <label className="block text-[10px] font-bold text-slate-400 uppercase font-mono mb-1">Connected party (Person/Vendor)</label>
-                  <select 
-                    value={relatedPersonId}
-                    onChange={e => setRelatedPersonId(e.target.value)}
-                    className="w-full p-2 text-xs border border-slate-200 rounded bg-white text-slate-755"
-                    id="split_input_person"
-                  >
-                    <option value="">-- Choose party --</option>
-                    {people.map(p => (
-                      <option key={p.id} value={p.id}>{p.display_name} ({p.type})</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Individual Multi-Line Ledger list */}
-              <div className="space-y-3">
-                <div className="flex justify-between items-center">
-                  <h4 className="text-xs font-bold text-slate-850 uppercase font-mono">Journal Ledger Lines</h4>
-                  <button 
-                    type="button"
-                    onClick={handleAddLine}
-                    className="p-1 px-3 bg-slate-100 hover:bg-slate-900 hover:text-white transition-all text-[11px] font-bold text-slate-800 rounded flex items-center gap-1 cursor-pointer"
-                    id="btn_split_add_line"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Insert Ledger Row
-                  </button>
-                </div>
-
-                <div className="space-y-2 border border-slate-100 bg-slate-50/50 p-3 rounded-lg" id="split_draft_lines">
-                  {draftLines.map((line, idx) => (
-                    <div key={idx} className="grid grid-cols-1 md:grid-cols-12 gap-2.5 items-center bg-white p-2.5 rounded border border-gray-200 relative">
-                      {/* Account code selector */}
-                      <div className="md:col-span-3">
-                        <label className="text-[8px] font-bold text-slate-400 uppercase font-mono block mb-1">Chart of Accounts</label>
-                        <select 
-                          value={line.accountId}
-                          onChange={e => handleLineChange(idx, 'accountId', e.target.value)}
-                          className="w-full p-1.5 text-xs text-slate-800 border border-slate-200 rounded bg-white"
-                          id={`line_acct_${idx}`}
-                        >
-                          {accounts.map(a => (
-                            <option key={a.id} value={a.id}>{a.name} ({a.account_type})</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Category matcher */}
-                      <div className="md:col-span-2">
-                        <label className="text-[8px] font-bold text-slate-400 uppercase font-mono block mb-1">Group Category</label>
-                        <select 
-                          value={line.categoryId}
-                          onChange={e => handleLineChange(idx, 'categoryId', e.target.value)}
-                          className="w-full p-1.5 text-xs text-slate-705 border border-slate-200 rounded bg-white capitalize"
-                          id={`line_cat_${idx}`}
-                        >
-                          <option value="">-- None --</option>
-                          {categories.map(c => (
-                            <option key={c.id} value={c.id}>{c.name}</option>
-                          ))}
-                        </select>
-                      </div>
-
-                      {/* Debit amount */}
-                      <div className="md:col-span-2">
-                        <label className="text-[8px] font-bold text-emerald-700 uppercase font-mono block mb-1">Debit (+) Amount</label>
-                        <input 
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={line.debitAmount}
-                          placeholder="0.00"
-                          onChange={e => handleLineChange(idx, 'debitAmount', e.target.value)}
-                          className="w-full p-1.5 text-xs text-emerald-800 font-mono font-bold border border-slate-200 placeholder-slate-300 rounded"
-                          id={`line_debit_${idx}`}
-                        />
-                      </div>
-
-                      {/* Credit amount */}
-                      <div className="md:col-span-2">
-                        <label className="text-[8px] font-bold text-rose-700 uppercase font-mono block mb-1">Credit (-) Amount</label>
-                        <input 
-                          type="number"
-                          step="0.01"
-                          min="0"
-                          value={line.creditAmount}
-                          placeholder="0.00"
-                          onChange={e => handleLineChange(idx, 'creditAmount', e.target.value)}
-                          className="w-full p-1.5 text-xs text-rose-800 font-mono font-semibold border border-slate-200 placeholder-slate-300 rounded"
-                          id={`line_credit_${idx}`}
-                        />
-                      </div>
-
-                      {/* Memo line details */}
-                      <div className="md:col-span-2">
-                        <label className="text-[8px] font-bold text-slate-404 uppercase font-mono block mb-1">Line Item memo</label>
-                        <input 
-                          type="text"
-                          value={line.memo}
-                          onChange={e => handleLineChange(idx, 'memo', e.target.value)}
-                          placeholder="Specific split info"
-                          className="w-full p-1.5 text-xs border border-slate-200 text-slate-700 rounded"
-                          id={`line_memo_${idx}`}
-                        />
-                      </div>
-
-                      {/* Delete row trigger */}
-                      <div className="md:col-span-1 pt-4 md:pt-0 flex justify-end">
-                        <button 
-                          type="button"
-                          onClick={() => handleRemoveLine(idx)}
-                          className="text-slate-400 hover:text-rose-600 transition-colors cursor-pointer"
-                          title="Remove row"
-                          id={`btn_split_remove_${idx}`}
-                        >
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Memo comments block */}
-              <div>
-                <label className="block text-[10px] font-bold text-slate-400 uppercase font-mono mb-1">Combined Journal Entry Memo Notes</label>
-                <textarea 
-                  value={memo}
-                  onChange={e => setMemo(e.target.value)}
-                  placeholder="Detail notes about adjustment justifications, supporting contract indices..."
-                  className="w-full p-2 text-xs border border-slate-200 rounded h-14 resize-none"
-                  id="split_input_combo_memo"
-                />
-              </div>
-
-              {/* Math ledger balance recap */}
-              <div className="p-3 bg-slate-950 text-white rounded-lg gap-4 flex flex-col md:flex-row justify-between items-center text-xs font-mono" id="split_math_banner">
-                <div className="space-y-1">
-                  <p className="font-extrabold uppercase text-emerald-400 text-[10px]">General Double-Entry Ledger Equations</p>
-                  <p className="text-slate-305">Every single debit value must correspond to a balancing credit value.</p>
-                </div>
-                <div className="flex gap-4 text-xs font-extrabold">
-                  <div className="bg-emerald-950 p-[3px] px-3 border border-emerald-800 rounded">
-                    Total Debits: {formatCurrency(draftLines.reduce((sum, l) => sum + (Number(l.debitAmount) || 0), 0))}
-                  </div>
-                  <div className="bg-rose-950 p-[3px] px-3 border border-rose-850 rounded">
-                    Total Credits: {formatCurrency(draftLines.reduce((sum, l) => sum + (Number(l.creditAmount) || 0), 0))}
-                  </div>
-                </div>
-              </div>
-
-              {creatorError && (
-                <div className="p-3 bg-red-50 border border-red-200 rounded-lg text-xs text-red-700 flex items-center gap-2" id="split_creator_error">
-                  <AlertCircle className="w-4 h-4 text-red-650 flex-shrink-0" />
-                  <p className="font-semibold">{creatorError}</p>
-                </div>
-              )}
-
-              {/* Submission Controls */}
-              <div className="flex justify-end gap-3 pt-4 border-t border-slate-100 text-xs flex-shrink-0">
-                <button 
-                  type="button"
-                  onClick={() => setIsCreatorOpen(false)}
-                  className="p-2 px-4 border border-slate-250 rounded hover:bg-slate-50 transition-colors font-semibold"
-                  id="btn_split_cancel"
-                >
-                  Cancel
-                </button>
-                <button 
-                  type="submit"
-                  className="p-2 px-5 bg-slate-900 hover:bg-slate-800 text-white transition-all rounded font-black cursor-pointer"
-                  id="btn_split_submit"
-                >
-                  Verify Balance & File Post
-                </button>
-              </div>
-            </form>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

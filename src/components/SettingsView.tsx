@@ -1,228 +1,331 @@
-import React, { useState } from 'react';
-import { db, postgresMigrations } from '../db';
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import React, { useRef, useState } from 'react';
+import { useQiStore } from '../store';
 import { 
-  Download, 
-  RefreshCcw, 
-  Upload, 
-  Server, 
-  Cloud, 
-  Lock, 
-  Key, 
-  FileCode,
-  CheckCircle,
-  HelpCircle,
-  Clipboard
+  Settings as SettingsIcon, Download, Upload, RefreshCw, 
+  Shield, HelpCircle, HardDrive, Database, Info, Trash2,
+  CheckCircle, AlertTriangle, X
 } from 'lucide-react';
 
-interface SettingsProps {
-  triggerRefresh: () => void;
-}
+export default function SettingsView() {
+  const { exportData, importData, resetToDefault, clearToBlankLedger } = useQiStore();
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-export function SettingsView({ triggerRefresh }: SettingsProps) {
-  const [copiedMigration, setCopiedMigration] = useState(false);
+  // Custom modal states
+  const [modalState, setModalState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'danger' | 'info' | 'warning';
+    onConfirm?: () => void;
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'info'
+  });
 
-  const handleCopyMigrations = () => {
-    navigator.clipboard.writeText(postgresMigrations);
-    setCopiedMigration(true);
-    setTimeout(() => setCopiedMigration(false), 2000);
+  const [alertState, setAlertState] = useState<{
+    isOpen: boolean;
+    title: string;
+    message: string;
+    type: 'success' | 'error' | 'info';
+  }>({
+    isOpen: false,
+    title: '',
+    message: '',
+    type: 'info'
+  });
+
+  const showConfirm = (title: string, message: string, type: 'danger' | 'info' | 'warning', onConfirm: () => void) => {
+    setModalState({
+      isOpen: true,
+      title,
+      message,
+      type,
+      onConfirm
+    });
   };
 
-  const handleResetDatabase = () => {
-    if (confirm('Verify: Reset ALL local ledger tables, accounts, categories, and bills to original seed defaults? This deletes all current custom records permanently.')) {
-      db.resetAll();
-      alert('Local bookkeeping database reset to default seeds successfully.');
-      triggerRefresh();
+  const showAlert = (title: string, message: string, type: 'success' | 'error' | 'info') => {
+    setAlertState({
+      isOpen: true,
+      title,
+      message,
+      type
+    });
+  };
+
+  const handleBackup = () => {
+    const dataStr = exportData();
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `qifinance_backup_${new Date().toISOString().split('T')[0]}.json`;
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleRestore = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        if (event.target?.result) {
+          const success = importData(event.target.result as string);
+          if (success) {
+            showAlert(
+              "Backup Restored",
+              "Backup successfully restored! Your ledger has been updated.",
+              "success"
+            );
+          } else {
+            showAlert(
+              "Restore Failed",
+              "Failed to restore backup. Please make sure the backup file has a valid JSON ledger format.",
+              "error"
+            );
+          }
+        }
+      };
+      reader.readAsText(file);
     }
   };
 
-  const handleExportJSON = () => {
-    const data: Record<string, string | null> = {};
-    const keys = [
-      'qifinance_accounts',
-      'qifinance_categories',
-      'qifinance_journal_entries',
-      'qifinance_journal_lines',
-      'qifinance_people',
-      'qifinance_debts',
-      'qifinance_bills',
-      'qifinance_assets',
-      'qifinance_import_batches'
-    ];
-
-    keys.forEach(key => {
-      data[key] = localStorage.getItem(key);
-    });
-
-    const jsonString = `data:text/json;charset=utf-8,${encodeURIComponent(JSON.stringify(data, null, 2))}`;
-    const downloadAnchor = document.createElement('a');
-    downloadAnchor.setAttribute('href', jsonString);
-    downloadAnchor.setAttribute('download', `qifinance_ledger_export_${new Date().toISOString().substring(0, 10)}.json`);
-    document.body.appendChild(downloadAnchor);
-    downloadAnchor.click();
-    downloadAnchor.remove();
+  const handleReset = () => {
+    showConfirm(
+      "Reset Database?",
+      "Wipe all current data changes and reload the default double-entry demo transactions?",
+      "warning",
+      () => {
+        resetToDefault();
+        showAlert(
+          "Demo Restored",
+          "Your ledger was successfully reset to the default demo state.",
+          "success"
+        );
+      }
+    );
   };
 
-  const handleRestoreJSON = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const fileReader = new FileReader();
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
-
-    fileReader.onload = (event) => {
-      try {
-        const parsed = JSON.parse(event.target?.result as string);
-        Object.entries(parsed).forEach(([key, val]) => {
-          if (val) localStorage.setItem(key, val as string);
-        });
-        alert('Ledger persistent tables successfully recovered from JSON backup! Page refreshing.');
-        triggerRefresh();
-      } catch (err) {
-        alert('Invalid backup structure matching expected schema parameters.');
+  const handleWipe = () => {
+    showConfirm(
+      "Wipe Ledger?",
+      "Wipe all transaction history? This will clear all transactions, statements, counterparties, schedules, and raw rows, leaving you with a clean, blank standard Chart of Accounts to start entering your own real records.",
+      "danger",
+      () => {
+        clearToBlankLedger();
+        showAlert(
+          "Ledger Wiped",
+          "Database successfully wiped to a blank slate! You can now start entering your own transactions.",
+          "success"
+        );
       }
-    };
-    fileReader.readAsText(files[0]);
+    );
   };
 
   return (
-    <div className="space-y-6 animate-fade-in" id="settings_view_block">
-       {/* Upper bar */}
-       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center py-2 border-b border-gray-100">
-        <div>
-          <h2 className="text-xl font-bold tracking-tight text-slate-900 font-sans" id="settings_main_title">
-            Private ledger configurations
-          </h2>
-          <p className="text-xs text-slate-500 font-mono">
-            SETUP COPILOTS • SCHEMA EXPORTS & DEPLOYMENT ENGINES
-          </p>
-        </div>
+    <div className="space-y-6">
+      {/* Header */}
+      <div>
+        <h2 className="text-2xl font-bold tracking-tight text-white font-display flex items-center gap-2">
+          <SettingsIcon className="text-emerald-400" size={24} />
+          Sovereign Backup & Settings
+        </h2>
+        <p className="text-xs text-zinc-400">
+          Control your financial data. No cloud-locking, no corporate spyware. Your ledger, your machine.
+        </p>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" id="settings_grid">
-        {/* Left column: Admin utilities (2 columns) */}
-        <div className="lg:col-span-2 space-y-6" id="settings_utilities_col">
-          
-          {/* Box 1: Backup / Restore */}
-          <div className="p-5 bg-white border border-gray-150 rounded-xl space-y-4">
-            <div>
-              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5 font-sans">
-                LocalStorage State Backup & Transfers
-              </h3>
-              <p className="text-xs text-slate-505 font-mono">EXPORT ENTIRE LOCAL LEDGER AS SEGREGATED PORTABLE JSON RECORDS</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {/* Core Controls Card */}
+        <div className="bg-zinc-900/30 border border-zinc-800/80 p-6 rounded-2xl space-y-6 backdrop-blur-sm">
+          <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-2 font-display">
+            <Database size={16} className="text-emerald-400" />
+            Ledger Data Operations
+          </h3>
+
+          <div className="space-y-4">
+            {/* Export */}
+            <div className="flex items-center justify-between p-4 bg-zinc-950/40 rounded-xl border border-zinc-800/50">
+              <div>
+                <span className="text-xs font-bold text-zinc-200 block">Export Full Ledger</span>
+                <span className="text-[10px] text-zinc-500">Download your entire double-entry ledger as raw JSON.</span>
+              </div>
+              <button
+                onClick={handleBackup}
+                className="bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-sm shrink-0"
+              >
+                <Download size={14} /> Export Backup
+              </button>
             </div>
 
-            <div className="flex flex-wrap gap-3 pt-1 text-xs">
-              <button 
-                onClick={handleExportJSON}
-                className="p-2 px-4 bg-slate-100 hover:bg-slate-205 border border-slate-250 text-slate-800 rounded flex items-center gap-1.5 font-semibold cursor-pointer"
-                id="btn_export_json"
-              >
-                <Download className="w-4 h-4 text-slate-600" />
-                Download JSON Backup
-              </button>
-
-              <label 
-                className="p-2 px-4 bg-slate-100 hover:bg-slate-200 border border-slate-250 text-slate-800 rounded flex items-center gap-1.5 font-semibold cursor-pointer"
-                id="lbl_restore_json"
-              >
-                <Upload className="w-4 h-4 text-slate-600" />
-                Upload JSON Backup
+            {/* Import */}
+            <div className="flex items-center justify-between p-4 bg-zinc-950/40 rounded-xl border border-zinc-800/50">
+              <div>
+                <span className="text-xs font-bold text-zinc-200 block">Restore Ledger Backup</span>
+                <span className="text-[10px] text-zinc-500">Restore your database from an existing JSON backup.</span>
+              </div>
+              <label className="bg-zinc-800 hover:bg-zinc-700 text-zinc-100 text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 transition-all cursor-pointer shadow-sm shrink-0">
+                <Upload size={14} /> Import State File
                 <input 
-                  type="file"
-                  accept=".json"
-                  onChange={handleRestoreJSON}
-                  className="hidden"
+                  type="file" 
+                  ref={fileInputRef}
+                  accept=".json" 
+                  className="hidden" 
+                  onChange={handleRestore} 
                 />
               </label>
-
-              <button 
-                onClick={handleResetDatabase}
-                className="p-2 px-4 bg-rose-50 hover:bg-rose-950 hover:text-white border border-rose-100 text-rose-700 transition-all rounded flex items-center gap-1.5 font-semibold ml-auto cursor-pointer"
-                id="btn_reset_db"
-              >
-                <RefreshCcw className="w-3.5 h-3.5" />
-                Reset database defaults
-              </button>
             </div>
-          </div>
 
-          {/* Box 2: Supabase Migrations */}
-          <div className="p-5 bg-white border border-gray-150 rounded-xl space-y-4">
-            <div className="flex justify-between items-center">
+            {/* Wipe to Blank Ledger */}
+            <div className="flex items-center justify-between p-4 bg-zinc-950/40 rounded-xl border border-zinc-800/50">
               <div>
-                <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-1.5 font-sans">
-                  PostgreSQL / Supabase Schema migrations SQL
-                </h3>
-                <p className="text-xs text-slate-500 font-mono font-sans">PRODUCTION-DEPLOYABLE TABLE RELATIONS WITH ENUMS, TRIGGERS, & CONSTRAINTS</p>
+                <span className="text-xs font-bold text-zinc-200 block">Wipe to Blank Ledger</span>
+                <span className="text-[10px] text-zinc-500">Remove all sample transactions and start fresh with empty records.</span>
               </div>
-
-              <button 
-                onClick={handleCopyMigrations}
-                className={`p-1 px-[10px] rounded text-[11px] font-mono leading-none tracking-wider font-extrabold flex items-center gap-1 border transition-all cursor-pointer ${copiedMigration ? 'bg-emerald-50 border-emerald-100 text-emerald-800' : 'bg-slate-90 bg-slate-100 hover:bg-slate-200 border-slate-250 text-slate-700'}`}
-                id="btn_copy_sql"
+              <button
+                onClick={handleWipe}
+                className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 border border-zinc-700 hover:border-zinc-600 transition-all cursor-pointer shrink-0"
               >
-                <Clipboard className="w-3.5 h-3.5" />
-                {copiedMigration ? 'Copied migrations!' : 'Copy SQL Script'}
+                <Trash2 size={14} className="text-rose-400" /> Wipe Ledger
               </button>
             </div>
 
-            <div className="bg-slate-950 p-4 rounded-lg font-mono text-[9.5px] text-emerald-400 overflow-x-auto max-h-[190px] border border-slate-800" id="sql_migrations_viewer">
-              <pre>{postgresMigrations}</pre>
+            {/* Clear Database */}
+            <div className="flex items-center justify-between p-4 bg-zinc-950/40 rounded-xl border border-rose-500/10">
+              <div>
+                <span className="text-xs font-bold text-rose-400 block">Reset Database</span>
+                <span className="text-[10px] text-zinc-500">Wipe all your transactions and reload default double-entry data.</span>
+              </div>
+              <button
+                onClick={handleReset}
+                className="bg-rose-500/10 hover:bg-rose-500 text-rose-400 hover:text-white text-xs font-semibold px-4 py-2 rounded-xl flex items-center gap-1.5 border border-rose-500/20 hover:border-rose-500 transition-all cursor-pointer shrink-0"
+              >
+                <RefreshCw size={14} /> Reload Demo Data
+              </button>
             </div>
           </div>
         </div>
 
-        {/* Right column: Cloud deployment instructions (1 column) */}
-        <div className="space-y-4 font-sans" id="settings_doc_col">
-          <h3 className="text-xs font-bold uppercase tracking-wider text-slate-400 font-mono font-sans">Cloud Infrastructure guides</h3>
+        {/* Philosophy Card */}
+        <div className="bg-zinc-900/30 border border-zinc-800/80 p-6 rounded-2xl space-y-4 backdrop-blur-sm">
+          <h3 className="text-sm font-semibold text-zinc-100 flex items-center gap-2 font-display">
+            <Shield size={16} className="text-emerald-400" />
+            The QiFi Data Guarantee
+          </h3>
 
-          {/* Guide item 1: Cloudflare pages */}
-          <div className="p-4 bg-white border border-gray-150 rounded-xl space-y-2">
-            <h4 className="text-xs font-bold text-slate-850 flex items-center gap-1.5">
-              <Cloud className="w-4 h-4 text-blue-500" />
-              Cloudflare Pages Hosting
-            </h4>
-            <p className="text-[11px] text-slate-500 leading-normal">
-              Deploying QiFinance on Cloudflare Pages is incredibly simple:
+          <div className="space-y-3 text-xs text-zinc-400 leading-relaxed font-sans">
+            <p>
+              Traditional financial tools force you to link accounts via third-party brokers (like Plaid) and store your logs on vulnerable servers. They sell your data, market unwanted loans, and freeze accounts arbitrarily.
             </p>
-            <ol className="text-[10px] text-slate-600 font-mono list-decimal list-inside space-y-1 bg-slate-50 p-2.5 rounded border border-slate-100">
-              <li>Link your GitHub repository in your Cloudflare dashboard.</li>
-              <li>Setup target directory build command: <span className="font-bold text-slate-900">npm run build</span>.</li>
-              <li>Configure root build outputs directory as: <span className="font-bold text-slate-900">dist</span>.</li>
-            </ol>
-          </div>
-
-          {/* Guide item 2: Zero Trust */}
-          <div className="p-4 bg-white border border-gray-150 rounded-xl space-y-2">
-            <h4 className="text-xs font-bold text-slate-850 flex items-center gap-1.5">
-              <Lock className="w-4 h-4 text-emerald-500" />
-              Cloudflare Zero Trust
-            </h4>
-            <p className="text-[11px] text-slate-500 leading-normal">
-              Protect your private database ledger before browser-side credentials loading:
+            <p className="font-semibold text-zinc-300">
+              QiFi does none of that. 
             </p>
-            <ol className="text-[10px] text-slate-600 font-mono list-decimal list-inside space-y-1 bg-slate-50 p-2.5 rounded border border-slate-100">
-              <li>Establish an Access application in Cloudflare Zero Trust.</li>
-              <li>Route to your private build URL.</li>
-              <li>Configure rules to only authorize your emails (e.g. your cloud account login verification).</li>
-            </ol>
-          </div>
-
-          {/* Guide item 3: Supabase setup */}
-          <div className="p-4 bg-white border border-gray-150 rounded-xl space-y-2">
-            <h4 className="text-xs font-bold text-slate-850 flex items-center gap-1.5">
-              <Server className="w-4 h-4 text-orange-500" />
-              Supabase SQL integrations
-            </h4>
-            <p className="text-[11px] text-slate-500 leading-normal">
-              Deploy double-entry schemas safely on cloud SQL postgres arrays:
+            <p>
+              Every transaction you import, receipt you attach, and category you define is saved locally inside your browser's persistent sandbox storage (<code className="bg-zinc-950 text-[10px] font-mono px-1 rounded">localStorage</code>). 
             </p>
-            <ol className="text-[10px] text-slate-605 font-mono list-decimal list-inside space-y-1 bg-slate-50 p-2.5 rounded border border-slate-100">
-              <li>Open SQL Editor in your Supabase project dashboard.</li>
-              <li>Paste the auto-generated Copy SQL Code block.</li>
-              <li>Execute to create relational ledger constraints instantly.</li>
-            </ol>
+            <div className="p-3.5 bg-zinc-950/40 rounded-xl border border-zinc-800/60 flex gap-2.5 items-start mt-2">
+              <Info size={14} className="text-emerald-400 shrink-0 mt-0.5" />
+              <p className="text-[10px] text-zinc-500 leading-normal">
+                To guarantee your data remains permanent and unlinked from company lock-ins, remember to download a backup file regularly. Store it in secure, encrypted cloud repositories of your choice.
+              </p>
+            </div>
           </div>
         </div>
       </div>
+
+      {/* CUSTOM CONFIRMATION MODAL */}
+      {modalState.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-md w-full p-6 shadow-2xl space-y-4">
+            <div className="flex items-start gap-3">
+              <div className={`p-2 rounded-xl shrink-0 ${
+                modalState.type === 'danger' 
+                  ? 'bg-rose-500/10 border border-rose-500/20 text-rose-400' 
+                  : modalState.type === 'warning'
+                    ? 'bg-amber-500/10 border border-amber-500/20 text-amber-400'
+                    : 'bg-emerald-500/10 border border-emerald-500/20 text-emerald-400'
+              }`}>
+                {modalState.type === 'danger' ? (
+                  <Trash2 size={20} />
+                ) : modalState.type === 'warning' ? (
+                  <AlertTriangle size={20} />
+                ) : (
+                  <Info size={20} />
+                )}
+              </div>
+              <div className="space-y-1 flex-1">
+                <h4 className="font-bold text-zinc-100 text-sm font-display">{modalState.title}</h4>
+                <p className="text-zinc-400 text-xs leading-relaxed">{modalState.message}</p>
+              </div>
+            </div>
+            
+            <div className="flex justify-end gap-2.5 pt-2">
+              <button
+                type="button"
+                onClick={() => setModalState(prev => ({ ...prev, isOpen: false }))}
+                className="bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs font-semibold px-4 py-2 rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setModalState(prev => ({ ...prev, isOpen: false }));
+                  if (modalState.onConfirm) modalState.onConfirm();
+                }}
+                className={`text-white text-xs font-semibold px-4 py-2 rounded-xl cursor-pointer ${
+                  modalState.type === 'danger'
+                    ? 'bg-rose-600 hover:bg-rose-500 border border-rose-500/30'
+                    : modalState.type === 'warning'
+                      ? 'bg-amber-600 hover:bg-amber-500 border border-amber-500/30 text-white'
+                      : 'bg-emerald-600 hover:bg-emerald-500 border border-emerald-500/30'
+                }`}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* CUSTOM ALERT MODAL */}
+      {alertState.isOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fadeIn">
+          <div className="bg-zinc-900 border border-zinc-800 rounded-2xl max-w-sm w-full p-6 shadow-2xl space-y-4 text-center">
+            <div className="mx-auto w-12 h-12 rounded-full flex items-center justify-center mb-2 bg-zinc-950 border border-zinc-850">
+              {alertState.type === 'success' ? (
+                <CheckCircle size={24} className="text-emerald-400" />
+              ) : alertState.type === 'error' ? (
+                <AlertTriangle size={24} className="text-rose-400" />
+              ) : (
+                <Info size={24} className="text-emerald-400" />
+              )}
+            </div>
+            
+            <div className="space-y-1">
+              <h4 className="font-bold text-zinc-100 text-sm font-display">{alertState.title}</h4>
+              <p className="text-zinc-400 text-xs leading-relaxed">{alertState.message}</p>
+            </div>
+
+            <div className="pt-2 flex justify-center">
+              <button
+                type="button"
+                onClick={() => setAlertState(prev => ({ ...prev, isOpen: false }))}
+                className="bg-emerald-600 hover:bg-emerald-500 border border-emerald-500/30 text-white text-xs font-semibold px-6 py-2 rounded-xl cursor-pointer"
+              >
+                Dismiss
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
