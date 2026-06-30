@@ -1,5 +1,6 @@
 {
   "name": "qifinance-api",
   "main": "src/index.ts",
-  "compatibility_date": "2026-06-30"
+  "compatibility_date": "2026-06-30",
+  "keep_vars": true
 }

@@ -158,6 +158,16 @@ function json(data: any, status = 200) {
   });
 }
 
+// Structured error response for Supabase failures
+async function handleSupabaseError(res: Response): Promise<Response> {
+  const errorText = await res.text();
+  return json({
+    error: "Supabase request failed",
+    status: res.status,
+    details: errorText
+  }, res.status === 404 ? 404 : 500);
+}
+
 // Supabase HTTP Inbound Helper
 async function supabaseFetch(env: Env, path: string, init: RequestInit = {}) {
   if (!env.SUPABASE_URL || !env.SUPABASE_SERVICE_ROLE_KEY) {
@@ -182,7 +192,7 @@ async function supabaseFetch(env: Env, path: string, init: RequestInit = {}) {
 async function handleGetAccounts(env: Env) {
   const res = await supabaseFetch(env, "/finance_accounts?select=*&order=code.asc");
   if (!res.ok) {
-    return json({ error: await res.text() }, res.status);
+    return await handleSupabaseError(res);
   }
   const data = await res.json() as any;
   return json(data);
@@ -192,7 +202,7 @@ async function handleGetAccounts(env: Env) {
 async function handleGetCategories(env: Env) {
   const res = await supabaseFetch(env, "/finance_categories?select=*&order=code.asc");
   if (!res.ok) {
-    return json({ error: await res.text() }, res.status);
+    return await handleSupabaseError(res);
   }
   const data = await res.json() as any;
   return json(data);
@@ -209,7 +219,7 @@ async function handleGetTransactions(request: Request, env: Env) {
     `/finance_master_transactions?select=*&order=date.desc&limit=${limit}&offset=${offset}`
   );
   if (!res.ok) {
-    return json({ error: await res.text() }, res.status);
+    return await handleSupabaseError(res);
   }
   const data = await res.json() as any;
   return json(data);
@@ -219,7 +229,7 @@ async function handleGetTransactions(request: Request, env: Env) {
 async function handleGetTransactionById(id: string, env: Env) {
   const res = await supabaseFetch(env, `/finance_master_transactions?id=eq.${id}&select=*`);
   if (!res.ok) {
-    return json({ error: await res.text() }, res.status);
+    return await handleSupabaseError(res);
   }
   const data = await res.json() as any;
   if (Array.isArray(data) && data.length === 0) {
@@ -241,7 +251,7 @@ async function handleUpdateTransaction(id: string, request: Request, env: Env) {
   });
 
   if (!res.ok) {
-    return json({ error: await res.text() }, res.status);
+    return await handleSupabaseError(res);
   }
   const data = await res.json() as any;
   if (Array.isArray(data) && data.length === 0) {
@@ -260,7 +270,7 @@ async function handleDeleteTransaction(id: string, env: Env) {
   });
 
   if (!res.ok) {
-    return json({ error: await res.text() }, res.status);
+    return await handleSupabaseError(res);
   }
   const data = await res.json() as any;
   if (Array.isArray(data) && data.length === 0) {
@@ -380,16 +390,25 @@ async function handleImportPreview(request: Request, env: Env) {
 
   // Fetch rules & accounts to match
   const rulesRes = await supabaseFetch(env, "/finance_transaction_rules?select=*");
-  const rules = rulesRes.ok ? await rulesRes.json() as any[] : [];
+  if (!rulesRes.ok) {
+    return await handleSupabaseError(rulesRes);
+  }
+  const rules = await rulesRes.json() as any[];
 
   const accountsRes = await supabaseFetch(env, "/finance_accounts?select=id,name,code");
-  const accounts = accountsRes.ok ? await accountsRes.json() as any[] : [];
+  if (!accountsRes.ok) {
+    return await handleSupabaseError(accountsRes);
+  }
+  const accounts = await accountsRes.json() as any[];
   const accountIds = new Set(accounts.map((a: any) => a.id));
 
   // Fetch existing transactions to verify duplicates
   // Grab last 1000 transactions to match against in-memory
   const txRes = await supabaseFetch(env, "/finance_master_transactions?select=date,amount,description&order=date.desc&limit=1000");
-  const existingTransactions = txRes.ok ? await txRes.json() as any[] : [];
+  if (!txRes.ok) {
+    return await handleSupabaseError(txRes);
+  }
+  const existingTransactions = await txRes.json() as any[];
 
   const dataLines = hasHeaders ? parsedLines.slice(1) : parsedLines;
 
@@ -537,7 +556,7 @@ async function handleImportCommit(request: Request, env: Env) {
   });
 
   if (!batchRes.ok) {
-    return json({ error: `Failed to create batch: ${await batchRes.text()}` }, batchRes.status);
+    return await handleSupabaseError(batchRes);
   }
 
   const batchData = await batchRes.json() as any;
@@ -562,7 +581,7 @@ async function handleImportCommit(request: Request, env: Env) {
   });
 
   if (!rawRowsRes.ok) {
-    return json({ error: `Failed to insert raw rows: ${await rawRowsRes.text()}` }, rawRowsRes.status);
+    return await handleSupabaseError(rawRowsRes);
   }
 
   // 3. Filter out duplicates & insert actual master transactions
@@ -598,7 +617,7 @@ async function handleImportCommit(request: Request, env: Env) {
     });
 
     if (!txRes.ok) {
-      return json({ error: `Failed to create master transactions: ${await txRes.text()}` }, txRes.status);
+      return await handleSupabaseError(txRes);
     }
     txData = await txRes.json() as any[];
     createdCount = txData.length;
@@ -631,7 +650,7 @@ async function handleCreateAccount(request: Request, env: Env) {
     }
   });
   if (!res.ok) {
-    return json({ error: await res.text() }, res.status);
+    return await handleSupabaseError(res);
   }
   const data = await res.json() as any;
   return json(data[0]);
@@ -654,7 +673,7 @@ async function handleCreateCategory(request: Request, env: Env) {
     }
   });
   if (!res.ok) {
-    return json({ error: await res.text() }, res.status);
+    return await handleSupabaseError(res);
   }
   const data = await res.json() as any;
   return json(data[0]);
@@ -688,7 +707,7 @@ async function handleCreateTransaction(request: Request, env: Env) {
     }
   });
   if (!res.ok) {
-    return json({ error: await res.text() }, res.status);
+    return await handleSupabaseError(res);
   }
   const data = await res.json() as any;
   return json(data[0]);
